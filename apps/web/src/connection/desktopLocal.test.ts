@@ -104,4 +104,21 @@ describe("desktop local topology reads", () => {
     };
     expect(reader.readSnapshot()).toBe(removedSnapshot);
   });
+
+  it("preserves snapshot identity when the successful topology is unchanged", () => {
+    const secondary = {
+      id: "wsl:Ubuntu",
+      label: "WSL: Ubuntu",
+      httpBaseUrl: "http://127.0.0.1:4000",
+      wsBaseUrl: "ws://127.0.0.1:4000",
+    };
+    const reader = createDesktopSecondaryBootstrapsReader(() => ({
+      getLocalEnvironmentBootstraps: () => [{ ...secondary }],
+    }));
+
+    const firstSnapshot = reader.readSnapshot();
+    const secondSnapshot = reader.readSnapshot();
+
+    expect(secondSnapshot).toBe(firstSnapshot);
+  });
 });

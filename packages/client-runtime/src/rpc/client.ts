@@ -10,6 +10,7 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import { RpcClientError } from "effect/unstable/rpc";
 
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
+import type * as RpcSession from "../rpc/session.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 
 export class EnvironmentRpcUnavailableError extends Schema.TaggedErrorClass<EnvironmentRpcUnavailableError>()(
@@ -37,6 +38,7 @@ export class EnvironmentRpcRequestObserver extends Context.Reference<{
 
 export type EnvironmentRpcTag = keyof WsRpcProtocolClient & string;
 type RpcMethod<TTag extends EnvironmentRpcTag> = WsRpcProtocolClient[TTag];
+const ENVIRONMENT_RPC_CONNECTION_WAIT_TIMEOUT = "15 seconds";
 
 export type EnvironmentSubscriptionRpcTag =
   | typeof ORCHESTRATION_WS_METHODS.subscribeShell
@@ -63,6 +65,25 @@ export type EnvironmentStreamRpcTag =
 export type EnvironmentUnaryRpcTag = Exclude<EnvironmentRpcTag, EnvironmentStreamRpcTag>;
 const isRpcClientError = Schema.is(RpcClientError.RpcClientError);
 
+function subscriptionRefValues<A>(ref: SubscriptionRef.SubscriptionRef<A>): Stream.Stream<A> {
+  return Stream.concat(Stream.fromEffect(SubscriptionRef.get(ref)), SubscriptionRef.changes(ref));
+}
+
+function supervisorSessionValues(
+  ref: SubscriptionRef.SubscriptionRef<Option.Option<RpcSession.RpcSession>>,
+): Stream.Stream<Option.Option<RpcSession.RpcSession>> {
+  let previous: Option.Option<RpcSession.RpcSession> | undefined;
+  return subscriptionRefValues(ref).pipe(
+    Stream.filter((session) => {
+      if (previous !== undefined && Object.is(previous, session)) {
+        return false;
+      }
+      previous = session;
+      return true;
+    }),
+  );
+}
+
 export type EnvironmentRpcInput<TTag extends EnvironmentRpcTag> = Parameters<RpcMethod<TTag>>[0];
 
 export type EnvironmentRpcSuccess<TTag extends EnvironmentUnaryRpcTag> =
@@ -87,18 +108,23 @@ export type EnvironmentRpcStreamFailure<TTag extends EnvironmentStreamRpcTag> =
 
 const currentSession = Effect.fn("EnvironmentRpc.currentSession")(function* () {
   const supervisor = yield* EnvironmentSupervisor;
-  return yield* SubscriptionRef.get(supervisor.session).pipe(
+  const unavailable = new EnvironmentRpcUnavailableError({
+    environmentId: supervisor.target.environmentId,
+    message: `${supervisor.target.label} is not connected.`,
+  });
+  const poll = (): Effect.Effect<RpcSession.RpcSession> =>
+    SubscriptionRef.get(supervisor.session).pipe(
+      Effect.flatMap(
+        Option.match({
+          onNone: () => Effect.sleep("50 millis").pipe(Effect.andThen(poll())),
+          onSome: Effect.succeed,
+        }),
+      ),
+    );
+  return yield* poll().pipe(
+    Effect.timeoutOption(ENVIRONMENT_RPC_CONNECTION_WAIT_TIMEOUT),
     Effect.flatMap(
-      Option.match({
-        onNone: () =>
-          Effect.fail(
-            new EnvironmentRpcUnavailableError({
-              environmentId: supervisor.target.environmentId,
-              message: `${supervisor.target.label} is not connected.`,
-            }),
-          ),
-        onSome: Effect.succeed,
-      }),
+      Option.match({ onNone: () => Effect.fail(unavailable), onSome: Effect.succeed }),
     ),
   );
 });
@@ -164,7 +190,7 @@ export function subscribe<TTag extends EnvironmentSubscriptionRpcTag>(
   return Stream.unwrap(
     EnvironmentSupervisor.pipe(
       Effect.map((supervisor) =>
-        SubscriptionRef.changes(supervisor.session).pipe(
+        supervisorSessionValues(supervisor.session).pipe(
           Stream.switchMap(
             Option.match({
               onNone: () => Stream.empty,

@@ -11,6 +11,7 @@ import type * as PlatformError from "effect/PlatformError";
 
 import { OrchestrationCommandInvariantError } from "./Errors.ts";
 import {
+  requireActiveProjectWorkspaceRootAbsent,
   listThreadsByProjectId,
   requireProject,
   requireProjectAbsent,
@@ -110,6 +111,11 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         readModel,
         command,
         projectId: command.projectId,
+      });
+      yield* requireActiveProjectWorkspaceRootAbsent({
+        readModel,
+        command,
+        workspaceRoot: command.workspaceRoot,
       });
 
       return {

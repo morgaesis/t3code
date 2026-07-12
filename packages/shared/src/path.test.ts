@@ -4,6 +4,8 @@ import {
   isUncPath,
   isWindowsAbsolutePath,
   isWindowsDrivePath,
+  normalizeProjectPathForComparison,
+  normalizeProjectPathForDispatch,
 } from "./path.ts";
 
 describe("path helpers", () => {
@@ -30,5 +32,19 @@ describe("path helpers", () => {
     expect(isExplicitRelativePath("./repo")).toBe(true);
     expect(isExplicitRelativePath("..\\repo")).toBe(true);
     expect(isExplicitRelativePath("~/repo")).toBe(false);
+  });
+
+  it("normalizes project paths for dispatch", () => {
+    expect(normalizeProjectPathForDispatch(" /work/repo// ")).toBe("/work/repo");
+    expect(normalizeProjectPathForDispatch("C:\\")).toBe("C:\\");
+    expect(normalizeProjectPathForDispatch("C:\\repo\\\\")).toBe("C:\\repo");
+  });
+
+  it("normalizes project paths for cross-layer comparison", () => {
+    expect(normalizeProjectPathForComparison("/work/repo/")).toBe("/work/repo");
+    expect(normalizeProjectPathForComparison("C:/Work/Repo/")).toBe("c:\\work\\repo");
+    expect(normalizeProjectPathForComparison("\\\\Server\\Share\\Repo\\")).toBe(
+      "\\\\server\\share\\repo",
+    );
   });
 });

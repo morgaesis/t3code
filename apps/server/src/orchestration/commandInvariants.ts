@@ -6,6 +6,7 @@ import type {
   ProjectId,
   ThreadId,
 } from "@t3tools/contracts";
+import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
 import * as Effect from "effect/Effect";
 
 import { OrchestrationCommandInvariantError } from "./Errors.ts";
@@ -29,6 +30,21 @@ export function findProjectById(
   projectId: ProjectId,
 ): OrchestrationProject | undefined {
   return readModel.projects.find((project) => project.id === projectId);
+}
+
+export function findActiveProjectByWorkspaceRoot(
+  readModel: OrchestrationReadModel,
+  workspaceRoot: string,
+): OrchestrationProject | undefined {
+  const normalizedWorkspaceRoot = normalizeProjectPathForComparison(workspaceRoot);
+  if (normalizedWorkspaceRoot.length === 0) {
+    return undefined;
+  }
+  return readModel.projects.find(
+    (project) =>
+      project.deletedAt === null &&
+      normalizeProjectPathForComparison(project.workspaceRoot) === normalizedWorkspaceRoot,
+  );
 }
 
 export function listThreadsByProjectId(
@@ -67,6 +83,23 @@ export function requireProjectAbsent(input: {
     invariantError(
       input.command.type,
       `Project '${input.projectId}' already exists and cannot be created twice.`,
+    ),
+  );
+}
+
+export function requireActiveProjectWorkspaceRootAbsent(input: {
+  readonly readModel: OrchestrationReadModel;
+  readonly command: OrchestrationCommand;
+  readonly workspaceRoot: string;
+}): Effect.Effect<void, OrchestrationCommandInvariantError> {
+  const project = findActiveProjectByWorkspaceRoot(input.readModel, input.workspaceRoot);
+  if (!project) {
+    return Effect.void;
+  }
+  return Effect.fail(
+    invariantError(
+      input.command.type,
+      `Project workspace root '${input.workspaceRoot}' is already used by project '${project.id}'.`,
     ),
   );
 }

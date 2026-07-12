@@ -52,6 +52,7 @@ describe("projectPaths", () => {
     expect(isFilesystemBrowseQuery("./")).toBe(true);
     expect(isFilesystemBrowseQuery("../")).toBe(true);
     expect(isFilesystemBrowseQuery("~/projects")).toBe(true);
+    expect(isFilesystemBrowseQuery("~\\projects")).toBe(true);
     expect(isFilesystemBrowseQuery("..\\docs")).toBe(true);
     expect(isFilesystemBrowseQuery("notes")).toBe(false);
   });
@@ -80,6 +81,33 @@ describe("projectPaths", () => {
     expect(resolveProjectPathForDispatch("./docs", "/home/user\\project")).toBe(
       "/home/user\\project/docs",
     );
+  });
+
+  it("resolves home-relative paths from the target environment cwd", () => {
+    expect(resolveProjectPathForDispatch("~/RunAtlas-is/Atlas", null, "/home/kristofer")).toBe(
+      "/home/kristofer/RunAtlas-is/Atlas",
+    );
+    expect(resolveProjectPathForDispatch("~/repo", null, "/home/kristofer/.t3")).toBe(
+      "/home/kristofer/repo",
+    );
+    expect(resolveProjectPathForDispatch("~\\Repo", null, "C:\\Users\\Me\\Projects")).toBe(
+      "C:\\Users\\Me\\Repo",
+    );
+    expect(resolveProjectPathForDispatch("~/repo", null)).toBe("~/repo");
+  });
+
+  it("matches existing remote projects after resolving home-relative input", () => {
+    const resolvedPath = resolveProjectPathForDispatch(
+      "~/RunAtlas-is/Atlas",
+      null,
+      "/home/kristofer",
+    );
+    const existing = findProjectByPath(
+      [{ id: "atlas", cwd: "/home/kristofer/RunAtlas-is/Atlas" }],
+      resolvedPath,
+    );
+
+    expect(existing?.id).toBe("atlas");
   });
 
   it("navigates browse paths with matching separators", () => {

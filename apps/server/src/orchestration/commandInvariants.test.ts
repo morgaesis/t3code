@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it } from "@effect/vitest";
 import {
   MessageId,
   CommandId,
@@ -12,8 +12,10 @@ import {
 import * as Effect from "effect/Effect";
 
 import {
+  findActiveProjectByWorkspaceRoot,
   findThreadById,
   listThreadsByProjectId,
+  requireActiveProjectWorkspaceRootAbsent,
   requireNonNegativeInteger,
   requireThread,
   requireThreadAbsent,
@@ -50,6 +52,19 @@ const readModel: OrchestrationReadModel = {
       createdAt: now,
       updatedAt: now,
       deletedAt: null,
+    },
+    {
+      id: ProjectId.make("project-deleted"),
+      title: "Deleted",
+      workspaceRoot: "/tmp/deleted",
+      defaultModelSelection: {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5-codex",
+      },
+      scripts: [],
+      createdAt: now,
+      updatedAt: now,
+      deletedAt: now,
     },
   ],
   threads: [
@@ -126,30 +141,62 @@ describe("commandInvariants", () => {
     ).toEqual([ThreadId.make("thread-2")]);
   });
 
-  it("requires existing thread", async () => {
-    const thread = await Effect.runPromise(
-      requireThread({
+  it("finds active projects by normalized workspace root", () => {
+    expect(findActiveProjectByWorkspaceRoot(readModel, "/tmp/project-a/")?.id).toBe("project-a");
+    expect(findActiveProjectByWorkspaceRoot(readModel, "/tmp/deleted")).toBeUndefined();
+  });
+
+  it.effect("rejects duplicate active workspace roots for project creation", () =>
+    Effect.gen(function* () {
+      const command: OrchestrationCommand = {
+        type: "project.create",
+        commandId: CommandId.make("cmd-duplicate-root"),
+        projectId: ProjectId.make("project-new"),
+        title: "Project New",
+        workspaceRoot: "/tmp/project-a/",
+        defaultModelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        createdAt: now,
+      };
+
+      const error = yield* requireActiveProjectWorkspaceRootAbsent({
+        readModel,
+        command,
+        workspaceRoot: command.workspaceRoot,
+      }).pipe(Effect.flip);
+      expect(error.message).toContain("already used by project 'project-a'");
+
+      yield* requireActiveProjectWorkspaceRootAbsent({
+        readModel,
+        command: { ...command, workspaceRoot: "/tmp/deleted" },
+        workspaceRoot: "/tmp/deleted",
+      });
+    }),
+  );
+
+  it.effect("requires existing thread", () =>
+    Effect.gen(function* () {
+      const thread = yield* requireThread({
         readModel,
         command: messageSendCommand,
         threadId: ThreadId.make("thread-1"),
-      }),
-    );
-    expect(thread.id).toBe(ThreadId.make("thread-1"));
+      });
+      expect(thread.id).toBe(ThreadId.make("thread-1"));
 
-    await expect(
-      Effect.runPromise(
-        requireThread({
-          readModel,
-          command: messageSendCommand,
-          threadId: ThreadId.make("missing"),
-        }),
-      ),
-    ).rejects.toThrow("does not exist");
-  });
+      const error = yield* requireThread({
+        readModel,
+        command: messageSendCommand,
+        threadId: ThreadId.make("missing"),
+      }).pipe(Effect.flip);
+      expect(error.message).toContain("does not exist");
+    }),
+  );
 
-  it("requires missing thread for create flows", async () => {
-    await Effect.runPromise(
-      requireThreadAbsent({
+  it.effect("requires missing thread for create flows", () =>
+    Effect.gen(function* () {
+      yield* requireThreadAbsent({
         readModel,
         command: {
           type: "thread.create",
@@ -168,52 +215,46 @@ describe("commandInvariants", () => {
           createdAt: now,
         },
         threadId: ThreadId.make("thread-3"),
-      }),
-    );
+      });
 
-    await expect(
-      Effect.runPromise(
-        requireThreadAbsent({
-          readModel,
-          command: {
-            type: "thread.create",
-            commandId: CommandId.make("cmd-3"),
-            threadId: ThreadId.make("thread-1"),
-            projectId: ProjectId.make("project-a"),
-            title: "dup",
-            modelSelection: {
-              instanceId: ProviderInstanceId.make("codex"),
-              model: "gpt-5-codex",
-            },
-            interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-            runtimeMode: "full-access",
-            branch: null,
-            worktreePath: null,
-            createdAt: now,
-          },
+      const error = yield* requireThreadAbsent({
+        readModel,
+        command: {
+          type: "thread.create",
+          commandId: CommandId.make("cmd-3"),
           threadId: ThreadId.make("thread-1"),
-        }),
-      ),
-    ).rejects.toThrow("already exists");
-  });
+          projectId: ProjectId.make("project-a"),
+          title: "dup",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5-codex",
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "full-access",
+          branch: null,
+          worktreePath: null,
+          createdAt: now,
+        },
+        threadId: ThreadId.make("thread-1"),
+      }).pipe(Effect.flip);
+      expect(error.message).toContain("already exists");
+    }),
+  );
 
-  it("requires non-negative integers", async () => {
-    await Effect.runPromise(
-      requireNonNegativeInteger({
+  it.effect("requires non-negative integers", () =>
+    Effect.gen(function* () {
+      yield* requireNonNegativeInteger({
         commandType: "thread.checkpoint.revert",
         field: "turnCount",
         value: 0,
-      }),
-    );
+      });
 
-    await expect(
-      Effect.runPromise(
-        requireNonNegativeInteger({
-          commandType: "thread.checkpoint.revert",
-          field: "turnCount",
-          value: -1,
-        }),
-      ),
-    ).rejects.toThrow("greater than or equal to 0");
-  });
+      const error = yield* requireNonNegativeInteger({
+        commandType: "thread.checkpoint.revert",
+        field: "turnCount",
+        value: -1,
+      }).pipe(Effect.flip);
+      expect(error.message).toContain("greater than or equal to 0");
+    }),
+  );
 });

@@ -23,11 +23,30 @@ import {
   getProjectOrderKey,
   selectProjectGroupingSettings,
 } from "../logicalProject";
-import { readThreadShell, useProjects, useServerConfigs, useThread } from "../state/entities";
+import {
+  readProject,
+  readServerConfig,
+  readThreadShell,
+  useProjects,
+  useServerConfigs,
+  useThread,
+} from "../state/entities";
 import { resolveNewDraftStartFromOrigin } from "../lib/chatThreadActions";
 import { resolveThreadRouteTarget } from "../threadRoutes";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
 import { useClientSettings } from "./useSettings";
+
+export function isDraftThreadForProjectRef(
+  draftThread: Pick<DraftThreadState, "environmentId" | "projectId"> | null | undefined,
+  projectRef: ScopedProjectRef,
+): boolean {
+  return (
+    draftThread !== null &&
+    draftThread !== undefined &&
+    draftThread.environmentId === projectRef.environmentId &&
+    draftThread.projectId === projectRef.projectId
+  );
+}
 
 export function useNewThreadHandler() {
   const projects = useProjects();
@@ -51,6 +70,7 @@ export function useNewThreadHandler() {
     ): Promise<void> => {
       const {
         getDraftSessionByLogicalProjectKey,
+        getDraftSessionByProjectRef,
         getDraftSession,
         getDraftThread,
         applyStickyState,
@@ -58,13 +78,16 @@ export function useNewThreadHandler() {
         setLogicalProjectDraftThreadId,
       } = useComposerDraftStore.getState();
       const currentRouteTarget = getCurrentRouteTarget();
-      const project = projects.find(
-        (candidate) =>
-          candidate.id === projectRef.projectId &&
-          candidate.environmentId === projectRef.environmentId,
-      );
+      const project =
+        projects.find(
+          (candidate) =>
+            candidate.id === projectRef.projectId &&
+            candidate.environmentId === projectRef.environmentId,
+        ) ?? readProject(projectRef);
       const environmentSettings =
-        serverConfigs.get(projectRef.environmentId)?.settings ?? DEFAULT_SERVER_SETTINGS;
+        serverConfigs.get(projectRef.environmentId)?.settings ??
+        readServerConfig(projectRef.environmentId)?.settings ??
+        DEFAULT_SERVER_SETTINGS;
       const logicalProjectKey = project
         ? deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings)
         : scopedProjectKey(projectRef);
@@ -72,7 +95,10 @@ export function useNewThreadHandler() {
       const hasWorktreePathOption = options?.worktreePath !== undefined;
       const hasEnvModeOption = options?.envMode !== undefined;
       const hasStartFromOriginOption = options?.startFromOrigin !== undefined;
-      const storedDraftThread = getDraftSessionByLogicalProjectKey(logicalProjectKey);
+      const logicalStoredDraftThread = getDraftSessionByLogicalProjectKey(logicalProjectKey);
+      const storedDraftThread = isDraftThreadForProjectRef(logicalStoredDraftThread, projectRef)
+        ? logicalStoredDraftThread
+        : getDraftSessionByProjectRef(projectRef);
       const storedDraftThreadRef = storedDraftThread
         ? scopeThreadRef(storedDraftThread.environmentId, storedDraftThread.threadId)
         : null;
@@ -128,6 +154,7 @@ export function useNewThreadHandler() {
         latestActiveDraftThread &&
         currentRouteTarget?.kind === "draft" &&
         latestActiveDraftThread.logicalProjectKey === logicalProjectKey &&
+        isDraftThreadForProjectRef(latestActiveDraftThread, projectRef) &&
         latestActiveDraftThread.promotedTo == null
       ) {
         if (

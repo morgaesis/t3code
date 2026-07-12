@@ -111,6 +111,29 @@ describe("environment RPC", () => {
     }),
   );
 
+  it.effect("waits for a session when unary requests start during connection setup", () =>
+    Effect.gen(function* () {
+      const client = {
+        [WS_METHODS.cloudGetRelayClientStatus]: () =>
+          Effect.succeed({ status: "available", version: "2026.6.0" }),
+      } as unknown as WsRpcProtocolClient;
+      const { activeSession, supervisor } = yield* makeHarness();
+
+      const requestFiber = yield* request(WS_METHODS.cloudGetRelayClientStatus, {}).pipe(
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        Effect.forkChild,
+      );
+      yield* Effect.yieldNow;
+      yield* SubscriptionRef.set(activeSession, Option.some(session(client)));
+      yield* TestClock.adjust("50 millis");
+
+      expect(yield* Fiber.join(requestFiber)).toEqual({
+        status: "available",
+        version: "2026.6.0",
+      });
+    }),
+  );
+
   it.effect("binds finite streaming commands to one active session", () =>
     Effect.gen(function* () {
       const firstEvents = yield* Queue.unbounded<RelayClientInstallProgressEvent>();
@@ -182,6 +205,27 @@ describe("environment RPC", () => {
 
       expect(subscriptions).toEqual(["first", "second"]);
       expect(yield* Ref.get(retryCount)).toBe(0);
+    }),
+  );
+
+  it.effect("subscribes to a session that is already active when mounted", () =>
+    Effect.gen(function* () {
+      const events = yield* Queue.unbounded<{ readonly type: "terminal.exit" }>();
+      const client = {
+        [WS_METHODS.subscribeTerminalEvents]: () => Stream.fromQueue(events),
+      } as unknown as WsRpcProtocolClient;
+      const { activeSession, supervisor } = yield* makeHarness();
+
+      yield* SubscriptionRef.set(activeSession, Option.some(session(client)));
+      const resultFiber = yield* subscribe(WS_METHODS.subscribeTerminalEvents, {}).pipe(
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        Effect.forkChild,
+      );
+      yield* Queue.offer(events, { type: "terminal.exit" });
+
+      expect(yield* Fiber.join(resultFiber)).toEqual([{ type: "terminal.exit" }]);
     }),
   );
 

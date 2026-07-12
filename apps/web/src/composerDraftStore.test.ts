@@ -850,6 +850,26 @@ describe("composerDraftStore project draft thread mapping", () => {
     expect(draftByKey(draftId)).toBeUndefined();
   });
 
+  it("keeps a previous shared-logical draft when another project takes the shared slot", () => {
+    const store = useComposerDraftStore.getState();
+    const logicalProjectKey = "github.com/example/repo";
+    store.setLogicalProjectDraftThreadId(logicalProjectKey, projectRef, localDraftId, {
+      threadId,
+    });
+    store.setPrompt(localDraftId, "local prompt");
+
+    store.setLogicalProjectDraftThreadId(logicalProjectKey, remoteProjectRef, remoteDraftId, {
+      threadId: otherThreadId,
+    });
+
+    expect(store.getDraftSessionByLogicalProjectKey(logicalProjectKey)?.draftId).toBe(
+      remoteDraftId,
+    );
+    expect(store.getDraftSessionByProjectRef(projectRef)?.draftId).toBe(localDraftId);
+    expect(store.getDraftSessionByProjectRef(remoteProjectRef)?.draftId).toBe(remoteDraftId);
+    expect(draftByKey(localDraftId)?.prompt).toBe("local prompt");
+  });
+
   it("keeps composer drafts when the thread is still mapped by another project", () => {
     const store = useComposerDraftStore.getState();
     store.setProjectDraftThreadId(projectRef, draftId, { threadId });

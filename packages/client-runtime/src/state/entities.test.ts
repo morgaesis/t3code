@@ -227,6 +227,32 @@ describe("environment entity projections", () => {
     expect(merged?.messages).toBe(messages);
   });
 
+  it("uses shell metadata while thread detail is unavailable", () => {
+    const shell = {
+      ...THREAD_SHELL,
+      environmentId: ENVIRONMENT_ID,
+      title: "Shell thread",
+      branch: "main",
+      worktreePath: "/repo",
+    };
+
+    const merged = mergeEnvironmentThread(null, shell);
+
+    expect(merged).toMatchObject({
+      environmentId: ENVIRONMENT_ID,
+      id: THREAD_ID,
+      projectId: PROJECT_ID,
+      title: "Shell thread",
+      branch: "main",
+      worktreePath: "/repo",
+      deletedAt: null,
+    });
+    expect(merged?.messages).toEqual([]);
+    expect(merged?.proposedPlans).toEqual([]);
+    expect(merged?.activities).toEqual([]);
+    expect(merged?.checkpoints).toEqual([]);
+  });
+
   it("preserves untouched project and thread identities across unrelated shell updates", () => {
     const harness = makeHarness();
     const projectRefsAtom = harness.projects.environmentProjectRefsAtom(ENVIRONMENT_ID);

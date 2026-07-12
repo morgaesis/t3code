@@ -1,10 +1,19 @@
 import { describe, expect, it, vi } from "vite-plus/test";
-import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ProjectId,
+  ProviderInstanceId,
+  ThreadId,
+  type OrchestrationReadModel,
+} from "@t3tools/contracts";
 import type { Thread } from "../types";
 import {
   buildThreadActionItems,
   filterCommandPaletteGroups,
+  scopeActiveReadModelProjects,
+  scopeActiveReadModelThreads,
   type CommandPaletteGroup,
+  waitForCommandPaletteValue,
 } from "./CommandPalette.logic";
 
 const LOCAL_ENVIRONMENT_ID = EnvironmentId.make("environment-local");
@@ -161,5 +170,113 @@ describe("buildThreadActionItems", () => {
     });
 
     expect(items.map((item) => item.value)).toEqual(["thread:thread-active"]);
+  });
+});
+
+describe("waitForCommandPaletteValue", () => {
+  it("returns the first available value after polling", async () => {
+    let reads = 0;
+    const delays: number[] = [];
+
+    const value = await waitForCommandPaletteValue({
+      read: () => {
+        reads += 1;
+        return reads === 3 ? "ready" : null;
+      },
+      timeoutMs: 200,
+      intervalMs: 50,
+      delay: async (milliseconds) => {
+        delays.push(milliseconds);
+      },
+    });
+
+    expect(value).toBe("ready");
+    expect(reads).toBe(3);
+    expect(delays).toEqual([50, 50]);
+  });
+
+  it("returns null when the value never appears", async () => {
+    let reads = 0;
+
+    const value = await waitForCommandPaletteValue({
+      read: () => {
+        reads += 1;
+        return null;
+      },
+      timeoutMs: 100,
+      intervalMs: 50,
+      delay: async () => undefined,
+    });
+
+    expect(value).toBeNull();
+    expect(reads).toBe(3);
+  });
+});
+
+describe("read model scoping", () => {
+  it("scopes only active projects and threads from an authoritative snapshot", () => {
+    const environmentId = EnvironmentId.make("environment-remote");
+    const activeProjectId = ProjectId.make("project-active");
+    const deletedProjectId = ProjectId.make("project-deleted");
+    const activeThreadId = ThreadId.make("thread-active");
+    const deletedThreadId = ThreadId.make("thread-deleted");
+    const snapshot: OrchestrationReadModel = {
+      snapshotSequence: 12,
+      projects: [
+        {
+          id: activeProjectId,
+          title: "Atlas",
+          workspaceRoot: "/home/kristofer/RunAtlas-is/Atlas",
+          repositoryIdentity: null,
+          defaultModelSelection: null,
+          scripts: [],
+          createdAt: "2026-03-01T00:00:00.000Z",
+          updatedAt: "2026-03-02T00:00:00.000Z",
+          deletedAt: null,
+        },
+        {
+          id: deletedProjectId,
+          title: "Deleted",
+          workspaceRoot: "/home/kristofer/deleted",
+          repositoryIdentity: null,
+          defaultModelSelection: null,
+          scripts: [],
+          createdAt: "2026-03-01T00:00:00.000Z",
+          updatedAt: "2026-03-02T00:00:00.000Z",
+          deletedAt: "2026-03-03T00:00:00.000Z",
+        },
+      ],
+      threads: [
+        makeThread({
+          id: activeThreadId,
+          environmentId,
+          projectId: activeProjectId,
+        }),
+        makeThread({
+          id: deletedThreadId,
+          environmentId,
+          projectId: activeProjectId,
+          deletedAt: "2026-03-03T00:00:00.000Z",
+        }),
+      ],
+      updatedAt: "2026-03-04T00:00:00.000Z",
+    };
+
+    expect(scopeActiveReadModelProjects({ environmentId, snapshot })).toEqual([
+      {
+        id: activeProjectId,
+        environmentId,
+        title: "Atlas",
+        workspaceRoot: "/home/kristofer/RunAtlas-is/Atlas",
+        repositoryIdentity: null,
+        defaultModelSelection: null,
+        scripts: [],
+        createdAt: "2026-03-01T00:00:00.000Z",
+        updatedAt: "2026-03-02T00:00:00.000Z",
+      },
+    ]);
+    expect(
+      scopeActiveReadModelThreads({ environmentId, snapshot }).map((thread) => thread.id),
+    ).toEqual([activeThreadId]);
   });
 });

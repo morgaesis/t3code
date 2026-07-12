@@ -1,4 +1,9 @@
-import { type KeybindingCommand, type FilesystemBrowseEntry } from "@t3tools/contracts";
+import {
+  type EnvironmentId,
+  type FilesystemBrowseEntry,
+  type KeybindingCommand,
+  type OrchestrationReadModel,
+} from "@t3tools/contracts";
 import type { SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import * as Arr from "effect/Array";
 import * as Result from "effect/Result";
@@ -53,6 +58,40 @@ export interface CommandPaletteView {
 }
 
 export type CommandPaletteMode = "root" | "root-browse" | "submenu" | "submenu-browse";
+
+export function scopeActiveReadModelProjects(input: {
+  readonly environmentId: EnvironmentId;
+  readonly snapshot: OrchestrationReadModel;
+}): Project[] {
+  return input.snapshot.projects.flatMap((project) => {
+    if (project.deletedAt !== null) {
+      return [];
+    }
+
+    return [
+      {
+        id: project.id,
+        title: project.title,
+        workspaceRoot: project.workspaceRoot,
+        repositoryIdentity: project.repositoryIdentity,
+        defaultModelSelection: project.defaultModelSelection,
+        scripts: project.scripts,
+        createdAt: project.createdAt,
+        updatedAt: project.updatedAt,
+        environmentId: input.environmentId,
+      },
+    ];
+  });
+}
+
+export function scopeActiveReadModelThreads(input: {
+  readonly environmentId: EnvironmentId;
+  readonly snapshot: OrchestrationReadModel;
+}): Thread[] {
+  return input.snapshot.threads.flatMap((thread) =>
+    thread.deletedAt === null ? [{ ...thread, environmentId: input.environmentId }] : [],
+  );
+}
 
 export function filterBrowseEntries(input: {
   browseEntries: ReadonlyArray<FilesystemBrowseEntry>;
@@ -360,4 +399,29 @@ export function getCommandPaletteInputPlaceholder(mode: CommandPaletteMode): str
     case "submenu-browse":
       return "Enter path (e.g. ~/projects/my-app)";
   }
+}
+
+export async function waitForCommandPaletteValue<T>(input: {
+  readonly read: () => T | null;
+  readonly timeoutMs: number;
+  readonly intervalMs: number;
+  readonly delay?: (milliseconds: number) => Promise<void>;
+}): Promise<T | null> {
+  const intervalMs = Math.max(1, input.intervalMs);
+  const attempts = Math.max(1, Math.ceil(Math.max(0, input.timeoutMs) / intervalMs) + 1);
+  const delay =
+    input.delay ??
+    ((milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds)));
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const value = input.read();
+    if (value !== null) {
+      return value;
+    }
+    if (attempt < attempts - 1) {
+      await delay(intervalMs);
+    }
+  }
+
+  return null;
 }

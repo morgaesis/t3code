@@ -3,15 +3,16 @@ import {
   isUncPath,
   isWindowsAbsolutePath,
   isWindowsDrivePath,
+  normalizeProjectPathForComparison,
+  normalizeProjectPathForDispatch,
+  trimTrailingPathSeparators,
 } from "@t3tools/shared/path";
+
+export { normalizeProjectPathForComparison, normalizeProjectPathForDispatch };
 
 const isWindowsPlatform = (platform: string): boolean => {
   return /^win(dows)?/i.test(platform);
 };
-
-function isRootPath(value: string): boolean {
-  return value === "/" || value === "\\" || /^[a-zA-Z]:[/\\]?$/.test(value);
-}
 
 function getAbsolutePathKind(value: string): "unix" | "windows" | null {
   if (isWindowsDrivePath(value) || isUncPath(value)) {
@@ -21,20 +22,6 @@ function getAbsolutePathKind(value: string): "unix" | "windows" | null {
     return "unix";
   }
   return null;
-}
-
-function trimTrailingPathSeparators(value: string): string {
-  if (value.length === 0 || isRootPath(value)) {
-    return value;
-  }
-  const trimmed =
-    getAbsolutePathKind(value) === "unix"
-      ? value.replace(/\/+$/g, "")
-      : value.replace(/[\\/]+$/g, "");
-  if (trimmed.length === 0) {
-    return value;
-  }
-  return /^[a-zA-Z]:$/.test(trimmed) ? `${trimmed}\\` : trimmed;
 }
 
 function preferredPathSeparator(value: string): "/" | "\\" {
@@ -100,6 +87,7 @@ export function isFilesystemBrowseQuery(value: string, platform = ""): boolean {
     value.startsWith("..\\") ||
     value.startsWith("/") ||
     value.startsWith("~/") ||
+    value.startsWith("~\\") ||
     (allowWindowsPaths && isWindowsAbsolutePath(value))
   );
 }
@@ -108,12 +96,62 @@ export function isUnsupportedWindowsProjectPath(value: string, platform: string)
   return isWindowsAbsolutePath(value) && !isWindowsPlatform(platform);
 }
 
-export function normalizeProjectPathForDispatch(value: string): string {
-  return trimTrailingPathSeparators(value.trim());
+function inferHomeDirectoryFromCwd(cwd?: string | null): string | null {
+  const normalizedCwd = normalizeProjectPathForDispatch(cwd ?? "");
+  const posixUsers = normalizedCwd.match(/^\/Users\/([^/]+)/);
+  if (posixUsers?.[1]) {
+    return `/Users/${posixUsers[1]}`;
+  }
+
+  const posixHome = normalizedCwd.match(/^\/home\/([^/]+)/);
+  if (posixHome?.[1]) {
+    return `/home/${posixHome[1]}`;
+  }
+
+  const windowsUser = normalizedCwd.match(/^([a-zA-Z]:[\\/]Users[\\/][^\\/]+)/);
+  if (windowsUser?.[1]) {
+    return normalizeProjectPathForDispatch(windowsUser[1]);
+  }
+
+  return null;
 }
 
-export function resolveProjectPathForDispatch(value: string, cwd?: string | null): string {
+function resolveTildeProjectPath(value: string, environmentCwd?: string | null): string | null {
   const trimmedValue = value.trim();
+  if (trimmedValue !== "~" && !trimmedValue.startsWith("~/") && !trimmedValue.startsWith("~\\")) {
+    return null;
+  }
+
+  const homeDirectory = inferHomeDirectoryFromCwd(environmentCwd);
+  if (!homeDirectory) {
+    return null;
+  }
+
+  if (trimmedValue === "~") {
+    return normalizeProjectPathForDispatch(homeDirectory);
+  }
+
+  const separator = preferredPathSeparator(homeDirectory);
+  const remainder =
+    separator === "\\"
+      ? trimmedValue.slice(2).replaceAll("/", "\\")
+      : trimmedValue.slice(2).replaceAll("\\", "/");
+  return normalizeProjectPathForDispatch(
+    `${trimTrailingPathSeparators(homeDirectory)}${separator}${remainder}`,
+  );
+}
+
+export function resolveProjectPathForDispatch(
+  value: string,
+  cwd?: string | null,
+  environmentCwd?: string | null,
+): string {
+  const trimmedValue = value.trim();
+  const tildePath = resolveTildeProjectPath(trimmedValue, environmentCwd);
+  if (tildePath !== null) {
+    return tildePath;
+  }
+
   if (!isExplicitRelativePath(trimmedValue) || !cwd) {
     return normalizeProjectPathForDispatch(trimmedValue);
   }
@@ -137,14 +175,6 @@ export function resolveProjectPathForDispatch(value: string, cwd?: string | null
   return normalizeProjectPathForDispatch(
     joinedPath.length === 0 ? absoluteBase.root : `${absoluteBase.root}${joinedPath}`,
   );
-}
-
-export function normalizeProjectPathForComparison(value: string): string {
-  const normalized = normalizeProjectPathForDispatch(value);
-  if (isWindowsDrivePath(normalized) || normalized.startsWith("\\\\")) {
-    return normalized.replaceAll("/", "\\").toLowerCase();
-  }
-  return normalized;
 }
 
 export function findProjectByPath<T extends { workspaceRoot?: string; cwd?: string }>(

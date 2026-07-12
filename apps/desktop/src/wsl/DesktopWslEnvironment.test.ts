@@ -111,9 +111,9 @@ describe("formatWslShellTransportFailureReason", () => {
 
 describe("buildWslNodeEnvPreamble", () => {
   it("passes the required Node engine range into the shared resolver", () => {
-    const preamble = buildWslNodeEnvPreamble("^22.16 || ^23.11 || >=24.10");
+    const preamble = buildWslNodeEnvPreamble("^22.22.2 || ^24.15.0 || >=26.0.0");
 
-    expect(preamble).toContain("T3_NODE_ENGINE_RANGE='^22.16 || ^23.11 || >=24.10'");
+    expect(preamble).toContain("T3_NODE_ENGINE_RANGE='^22.22.2 || ^24.15.0 || >=26.0.0'");
     expect(preamble.indexOf("T3_NODE_ENGINE_RANGE=")).toBeLessThan(
       preamble.lastIndexOf("ensure_remote_node_path || true"),
     );

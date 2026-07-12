@@ -336,9 +336,16 @@ remote_node_satisfies_engine() {
 NODE
 }
 
+remote_node_path_satisfies_engine() {
+  command -v node >/dev/null 2>&1 && remote_node_satisfies_engine >/dev/null 2>&1
+}
+
 ensure_remote_node_path() {
-  if command -v node >/dev/null 2>&1 && remote_node_satisfies_engine >/dev/null 2>&1; then
-    return 0
+  T3_ORIGINAL_PATH="$PATH"
+  T3_ORIGINAL_NODE="$(command -v node 2>/dev/null || true)"
+  T3_ORIGINAL_NODE_SUPPORTED=0
+  if [ -n "$T3_ORIGINAL_NODE" ] && remote_node_satisfies_engine >/dev/null 2>&1; then
+    T3_ORIGINAL_NODE_SUPPORTED=1
   fi
 
   prepend_path_if_dir "$HOME/.local/bin"
@@ -353,18 +360,33 @@ ensure_remote_node_path() {
   fi
   export VOLTA_HOME
   prepend_path_if_dir "$VOLTA_HOME/bin"
+  if remote_node_path_satisfies_engine && [ "$(command -v node)" != "$T3_ORIGINAL_NODE" ]; then
+    return 0
+  fi
 
   prepend_path_if_dir "$HOME/.asdf/shims"
   prepend_path_if_dir "$HOME/.asdf/bin"
-  if [ ! -x "$HOME/.asdf/shims/node" ] && [ -s "$HOME/.asdf/asdf.sh" ]; then
+  if remote_node_path_satisfies_engine && [ "$(command -v node)" != "$T3_ORIGINAL_NODE" ]; then
+    return 0
+  fi
+  if [ -s "$HOME/.asdf/asdf.sh" ]; then
     # shellcheck disable=SC1090
     . "$HOME/.asdf/asdf.sh"
+    if remote_node_path_satisfies_engine; then
+      return 0
+    fi
   fi
 
   prepend_path_if_dir "$HOME/.local/share/mise/shims"
   prepend_path_if_dir "$HOME/.mise/shims"
-  if ! command -v node >/dev/null 2>&1 && command -v mise >/dev/null 2>&1; then
+  if remote_node_path_satisfies_engine && [ "$(command -v node)" != "$T3_ORIGINAL_NODE" ]; then
+    return 0
+  fi
+  if command -v mise >/dev/null 2>&1; then
     eval "$(mise activate sh)" >/dev/null 2>&1 || true
+    if remote_node_path_satisfies_engine; then
+      return 0
+    fi
   fi
 
   if [ -z "\${FNM_DIR:-}" ]; then
@@ -373,15 +395,24 @@ ensure_remote_node_path() {
   export FNM_DIR
   prepend_path_if_dir "$FNM_DIR"
   prepend_path_if_dir "$HOME/.fnm"
-  if ! command -v node >/dev/null 2>&1 && command -v fnm >/dev/null 2>&1; then
-    eval "$(fnm env --shell bash)" >/dev/null 2>&1 || true
+  if command -v fnm >/dev/null 2>&1; then
+    eval "$(fnm env --use-on-cd --shell sh)" >/dev/null 2>&1 || eval "$(fnm env --shell sh)" >/dev/null 2>&1 || true
     fnm use --silent-if-unchanged >/dev/null 2>&1 || fnm use default >/dev/null 2>&1 || true
+    if remote_node_path_satisfies_engine; then
+      return 0
+    fi
   fi
 
   prepend_path_if_dir "$HOME/.nodenv/bin"
   prepend_path_if_dir "$HOME/.nodenv/shims"
-  if ! command -v node >/dev/null 2>&1 && command -v nodenv >/dev/null 2>&1; then
+  if remote_node_path_satisfies_engine && [ "$(command -v node)" != "$T3_ORIGINAL_NODE" ]; then
+    return 0
+  fi
+  if command -v nodenv >/dev/null 2>&1; then
     eval "$(nodenv init -)" >/dev/null 2>&1 || true
+    if remote_node_path_satisfies_engine; then
+      return 0
+    fi
   fi
 
   if [ -z "\${NVM_DIR:-}" ]; then
@@ -392,21 +423,37 @@ ensure_remote_node_path() {
   if [ -s "$NVM_DIR/nvm.sh" ]; then
     # shellcheck disable=SC1090
     . "$NVM_DIR/nvm.sh"
-    if ! command -v node >/dev/null 2>&1 && command -v nvm >/dev/null 2>&1; then
+    if command -v nvm >/dev/null 2>&1; then
       nvm use --silent default >/dev/null 2>&1 || nvm use --silent node >/dev/null 2>&1 || nvm use --silent --lts >/dev/null 2>&1 || true
+      if remote_node_path_satisfies_engine; then
+        return 0
+      fi
     fi
   fi
 
-  if ! command -v node >/dev/null 2>&1 && [ -d "$NVM_DIR/versions/node" ]; then
+  if [ -d "$NVM_DIR/versions/node" ]; then
     for T3_NODE_BIN in "$NVM_DIR"/versions/node/*/bin; do
       if [ -x "$T3_NODE_BIN/node" ]; then
         PATH="$T3_NODE_BIN:$PATH"
         export PATH
+        if remote_node_path_satisfies_engine; then
+          return 0
+        fi
       fi
     done
   fi
 
-  command -v node >/dev/null 2>&1 && remote_node_satisfies_engine
+  if remote_node_path_satisfies_engine; then
+    return 0
+  fi
+
+  if [ "$T3_ORIGINAL_NODE_SUPPORTED" -eq 1 ]; then
+    PATH="$(dirname "$T3_ORIGINAL_NODE"):$T3_ORIGINAL_PATH"
+    export PATH
+    return 0
+  fi
+
+  return 1
 }
 `;
 

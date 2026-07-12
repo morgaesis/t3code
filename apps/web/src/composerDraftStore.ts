@@ -2283,7 +2283,10 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                 nextLogicalProjectDraftThreadKeyByLogicalProjectKey,
                 previousThreadKeyForLogicalProject,
               ) &&
-              !isDraftThreadPromoting(previousDraftThread)
+              !isDraftThreadPromoting(previousDraftThread) &&
+              (previousDraftThread === undefined ||
+                (previousDraftThread.environmentId === projectRef.environmentId &&
+                  previousDraftThread.projectId === projectRef.projectId))
             ) {
               delete nextDraftThreadsByThreadKey[previousThreadKeyForLogicalProject];
               if (state.draftsByThreadKey[previousThreadKeyForLogicalProject] !== undefined) {
