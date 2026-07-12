@@ -128,6 +128,7 @@ describe("project commands", () => {
 
     const shell = shellSnapshotFromReadModel(snapshot);
 
+    expect(shell.snapshotSequence).toBe(snapshot.snapshotSequence);
     expect(shell.projects.map((project) => project.id)).toEqual([ACTIVE_PROJECT_ID]);
     expect(shell.threads.map((thread) => thread.id)).toEqual([ACTIVE_THREAD_ID]);
     expect(shell.threads[0]).toMatchObject({

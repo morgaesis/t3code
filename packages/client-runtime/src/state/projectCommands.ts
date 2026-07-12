@@ -158,7 +158,10 @@ const persistReadModelCaches = Effect.fn("EnvironmentCommands.persistReadModelCa
   yield* cache.saveShell(environmentId, shellSnapshotFromReadModel(snapshot));
   for (const thread of snapshot.threads) {
     if (thread.deletedAt === null) {
-      yield* cache.saveThread(environmentId, thread);
+      yield* cache.saveThread(environmentId, {
+        snapshotSequence: snapshot.snapshotSequence,
+        thread,
+      });
     } else {
       yield* cache.removeThread(environmentId, thread.id);
     }
