@@ -4,10 +4,12 @@ import {
   BearerConnectionTarget,
   RelayConnectionTarget,
   SshConnectionProfile,
+  SshConnectionRegistration,
   SshConnectionTarget,
 } from "@t3tools/client-runtime/connection";
 import {
   ConnectionCatalogDocument as RuntimeConnectionCatalogDocument,
+  registerConnectionInCatalog,
   type ConnectionCatalogDocument as RuntimeConnectionCatalogDocumentType,
 } from "@t3tools/client-runtime/platform";
 import type { PersistedSavedEnvironmentRecord } from "@t3tools/contracts";
@@ -41,6 +43,9 @@ const encodeEncryptedConnectionCatalogDocumentJson = Schema.encodeEffect(
 );
 const RuntimeConnectionCatalogDocumentJson = Schema.fromJsonString(
   RuntimeConnectionCatalogDocument,
+);
+const decodeRuntimeConnectionCatalogDocumentJson = Schema.decodeEffect(
+  RuntimeConnectionCatalogDocumentJson,
 );
 const encodeRuntimeConnectionCatalogDocumentJson = Schema.encodeEffect(
   RuntimeConnectionCatalogDocumentJson,
@@ -375,6 +380,59 @@ const migrateSavedEnvironmentRecords = Effect.fn(
   };
 });
 
+function reconcileLegacySshRecords(
+  catalog: RuntimeConnectionCatalogDocumentType,
+  records: readonly PersistedSavedEnvironmentRecord[],
+): { readonly catalog: RuntimeConnectionCatalogDocumentType; readonly changed: boolean } {
+  let next = catalog;
+  let changed = false;
+
+  for (const record of records) {
+    if (record.desktopSsh === undefined) {
+      continue;
+    }
+
+    const existingTarget = next.targets.find(
+      (target) => target.environmentId === record.environmentId,
+    );
+    if (existingTarget === undefined) {
+      continue;
+    }
+
+    const id = connectionId("ssh", record.environmentId);
+    const existingProfile = next.profiles.find((profile) => profile.connectionId === id);
+    const needsRepair =
+      existingTarget._tag !== "SshConnectionTarget" ||
+      existingTarget.connectionId !== id ||
+      existingProfile?._tag !== "SshConnectionProfile";
+
+    if (!needsRepair) {
+      continue;
+    }
+
+    const label = existingTarget.label;
+    next = registerConnectionInCatalog(
+      next,
+      new SshConnectionRegistration({
+        target: new SshConnectionTarget({
+          environmentId: record.environmentId,
+          label,
+          connectionId: id,
+        }),
+        profile: new SshConnectionProfile({
+          connectionId: id,
+          environmentId: record.environmentId,
+          label,
+          target: record.desktopSsh,
+        }),
+      }),
+    );
+    changed = true;
+  }
+
+  return { catalog: next, changed };
+}
+
 export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -469,6 +527,45 @@ export const make = Effect.gen(function* () {
     return Option.some(encoded);
   });
 
+  const reconcileExistingLegacySshCatalog = Effect.fn(
+    "desktop.connectionCatalogStore.reconcileExistingLegacySshCatalog",
+  )(function* (catalogJson: string) {
+    const records = yield* savedEnvironments.getRegistry.pipe(
+      Effect.catch(() => Effect.succeed<readonly PersistedSavedEnvironmentRecord[]>([])),
+    );
+    if (!records.some((record) => record.desktopSsh !== undefined)) {
+      return catalogJson;
+    }
+
+    const catalog = yield* decodeRuntimeConnectionCatalogDocumentJson(catalogJson).pipe(
+      Effect.catch(() => Effect.succeed<RuntimeConnectionCatalogDocumentType | null>(null)),
+    );
+    if (catalog === null) {
+      return catalogJson;
+    }
+
+    const reconciled = reconcileLegacySshRecords(catalog, records);
+    if (!reconciled.changed) {
+      return catalogJson;
+    }
+
+    const encoded = yield* encodeRuntimeConnectionCatalogDocumentJson(reconciled.catalog).pipe(
+      Effect.catch(() => Effect.succeed<string | null>(null)),
+    );
+    if (encoded === null) {
+      return catalogJson;
+    }
+
+    yield* writeCatalog(encoded).pipe(
+      Effect.catch(() =>
+        Effect.logWarning("Could not persist repaired desktop connection catalog.", {
+          catalogPath,
+        }),
+      ),
+    );
+    return encoded;
+  });
+
   return DesktopConnectionCatalogStore.of({
     get: Effect.gen(function* () {
       const document = yield* readDocument(fileSystem, catalogPath);
@@ -492,7 +589,7 @@ export const make = Effect.gen(function* () {
           ),
         ),
       );
-      return Option.some(decrypted);
+      return Option.some(yield* reconcileExistingLegacySshCatalog(decrypted));
     }).pipe(Effect.withSpan("desktop.connectionCatalogStore.get")),
     set: Effect.fn("desktop.connectionCatalogStore.set")(function* (catalog) {
       if (!(yield* encryptionAvailable)) {
