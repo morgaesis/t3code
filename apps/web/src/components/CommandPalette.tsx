@@ -143,6 +143,16 @@ import { appAtomRegistry } from "../rpc/atomRegistry";
 
 const EXISTING_REMOTE_PROJECT_SHELL_SYNC_TIMEOUT_MS = 2_500;
 const CREATED_PROJECT_SHELL_SYNC_TIMEOUT_MS = 15_000;
+
+function projectActionIcon(project: Project): ReactNode {
+  return (
+    <ProjectFavicon
+      environmentId={project.environmentId}
+      cwd={project.workspaceRoot}
+      className={ITEM_ICON_CLASS}
+    />
+  );
+}
 const PROJECT_SHELL_SYNC_INTERVAL_MS = 50;
 
 const EMPTY_BROWSE_ENTRIES: FilesystemBrowseResult["entries"] = [];
@@ -677,13 +687,7 @@ function OpenCommandPaletteDialog(props: {
       buildProjectActionItems({
         projects,
         valuePrefix: "project",
-        icon: (project) => (
-          <ProjectFavicon
-            environmentId={project.environmentId}
-            cwd={project.workspaceRoot}
-            className={ITEM_ICON_CLASS}
-          />
-        ),
+        icon: projectActionIcon,
         runProject: openProjectFromSearch,
       }),
     [openProjectFromSearch, projects],
@@ -695,13 +699,7 @@ function OpenCommandPaletteDialog(props: {
         projects,
         valuePrefix: "new-thread-in",
         shortcutCommand: "chat.new",
-        icon: (project) => (
-          <ProjectFavicon
-            environmentId={project.environmentId}
-            cwd={project.workspaceRoot}
-            className={ITEM_ICON_CLASS}
-          />
-        ),
+        icon: projectActionIcon,
         runProject: async (project) => {
           await startNewThreadInProjectFromContext(
             {
