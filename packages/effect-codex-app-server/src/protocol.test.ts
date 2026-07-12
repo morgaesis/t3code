@@ -23,6 +23,9 @@ const decodeJson = Schema.decodeEffect(Schema.UnknownFromJsonString);
 const decodeAccountTokenUsageResponse = Schema.decodeUnknownEffect(
   CodexRpc.CLIENT_REQUEST_RESPONSES["account/usage/read"],
 );
+const decodeModelListResponse = Schema.decodeUnknownEffect(
+  CodexRpc.CLIENT_REQUEST_RESPONSES["model/list"],
+);
 
 it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
   it.effect("maps account usage responses to the upstream token usage schema", () =>
@@ -39,6 +42,34 @@ it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
         dailyUsageBuckets: [{ startDate: "2026-06-10", tokens: 42 }],
         summary: { lifetimeTokens: 42 },
       });
+    }),
+  );
+
+  it.effect("accepts reasoning efforts advertised by newer model catalogs", () =>
+    Effect.gen(function* () {
+      const decoded = yield* decodeModelListResponse({
+        data: [
+          {
+            defaultReasoningEffort: "max",
+            description: "Test model",
+            displayName: "GPT Test",
+            hidden: false,
+            id: "gpt-test",
+            isDefault: true,
+            model: "gpt-test",
+            supportedReasoningEfforts: [
+              { description: "Maximum reasoning", reasoningEffort: "max" },
+              { description: "Extended reasoning", reasoningEffort: "ultra" },
+            ],
+          },
+        ],
+        nextCursor: null,
+      });
+
+      assert.deepEqual(
+        decoded.data[0]?.supportedReasoningEfforts.map(({ reasoningEffort }) => reasoningEffort),
+        ["max", "ultra"],
+      );
     }),
   );
 
