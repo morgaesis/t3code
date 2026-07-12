@@ -122,10 +122,10 @@ The desktop SSH launcher connects with a non-interactive `sh` session, writes a 
 The remote host must have a compatible Node.js runtime. T3 Code uses the server package's `engines.node` requirement:
 
 ```text
-^22.16 || ^23.11 || >=24.10
+^22.22.2 || ^24.15.0 || >=26.0.0
 ```
 
-During SSH launch, T3 Code first checks whether `node` is already available on `PATH`. If it is missing, the launcher tries common non-interactive shell locations and version-manager shims/activation hooks:
+During SSH launch, T3 Code checks the non-interactive shell `PATH`, then prefers compatible Node.js versions from common user-managed locations and version-manager shims/activation hooks before falling back to the original system `node`:
 
 - `~/.local/bin`, `~/bin`, `/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin`, `/bin`
 - Volta via `~/.volta/bin`
@@ -136,7 +136,7 @@ During SSH launch, T3 Code first checks whether `node` is already available on `
 - nvm via `$NVM_DIR/nvm.sh`, then `nvm use default`, `nvm use node`, or `nvm use --lts`
 - installed nvm versions under `$NVM_DIR/versions/node/*/bin`
 
-If launch fails with `node: command not found`, a port-scan failure, or a message that the remote Node version does not satisfy the required range, SSH into the host and check the same non-interactive shell path T3 Code uses:
+If launch fails with `node: command not found`, a port-scan failure, or a message that the remote Node version does not satisfy the required range, SSH into the host and check the same non-interactive shell path T3 Code starts from:
 
 ```bash
 ssh user@example.com 'sh -lc "command -v node && node --version"'
@@ -148,7 +148,7 @@ If that does not print a compatible Node version, configure your version manager
 nvm alias default 24
 ```
 
-With mise/asdf/fnm/nodenv, make sure the tool's shim directory is installed and points at a Node version satisfying the range above.
+With Volta, mise, asdf, fnm, nodenv, or nvm, make sure the managed Node version satisfies the range above. T3 Code prefers those managed locations when they are available to non-interactive shells.
 
 If reconnecting after an app update fails, retry the SSH launch once. The launcher now compares its generated runner script, stops stale launcher-managed remote servers, clears the SSH launch PID/port state, and starts a fresh remote server. You should not normally need to delete `~/.t3/ssh-launch` or kill `t3` processes manually.
 

@@ -26,7 +26,7 @@ import {
   waitForHttpReady,
 } from "./tunnel.ts";
 
-const TEST_NODE_ENGINE_RANGE = "^22.16 || ^23.11 || >=24.10";
+const TEST_NODE_ENGINE_RANGE = "^22.22.2 || ^24.15.0 || >=26.0.0";
 
 const makeSuccessfulProcess = (stdout: string) => {
   const stdoutStream = Stream.make(new TextEncoder().encode(stdout));
@@ -100,18 +100,24 @@ describe("ssh tunnel scripts", () => {
     assert.include(script, 'prepend_path_if_dir "$HOME/.local/bin"');
     assert.include(script, `T3_NODE_ENGINE_RANGE='${TEST_NODE_ENGINE_RANGE}'`);
     assert.include(script, "remote_node_satisfies_engine()");
+    assert.include(script, "remote_node_path_satisfies_engine()");
+    assert.include(script, 'T3_ORIGINAL_PATH="$PATH"');
+    assert.include(script, 'T3_ORIGINAL_NODE="$(command -v node');
+    assert.include(script, "T3_ORIGINAL_NODE_SUPPORTED=1");
     assert.include(script, "function satisfiesSemverRange");
     assert.include(script, "satisfiesSemverRange(rawVersion, range)");
     assert.include(script, 'prepend_path_if_dir "$VOLTA_HOME/bin"');
     assert.include(script, 'prepend_path_if_dir "$HOME/.asdf/shims"');
     assert.include(script, 'prepend_path_if_dir "$HOME/.local/share/mise/shims"');
-    assert.include(script, 'eval "$(fnm env --shell bash)"');
+    assert.include(script, 'eval "$(fnm env --use-on-cd --shell sh)"');
+    assert.include(script, 'eval "$(fnm env --shell sh)"');
     assert.include(script, "fnm use --silent-if-unchanged");
     assert.include(script, "fnm use default");
     assert.include(script, 'prepend_path_if_dir "$HOME/.nodenv/shims"');
     assert.include(script, 'NVM_DIR="$HOME/.nvm"');
     assert.include(script, "nvm use --silent default");
     assert.include(script, 'for T3_NODE_BIN in "$NVM_DIR"/versions/node/*/bin');
+    assert.include(script, 'PATH="$(dirname "$T3_ORIGINAL_NODE"):$T3_ORIGINAL_PATH"');
     assert.notInclude(script, "ensure $NVM_DIR/nvm.sh is available");
   });
 
