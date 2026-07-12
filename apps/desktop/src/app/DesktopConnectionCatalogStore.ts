@@ -531,14 +531,14 @@ export const make = Effect.gen(function* () {
     "desktop.connectionCatalogStore.reconcileExistingLegacySshCatalog",
   )(function* (catalogJson: string) {
     const records = yield* savedEnvironments.getRegistry.pipe(
-      Effect.catch(() => Effect.succeed<readonly PersistedSavedEnvironmentRecord[]>([])),
+      Effect.orElseSucceed(() => [] as readonly PersistedSavedEnvironmentRecord[]),
     );
     if (!records.some((record) => record.desktopSsh !== undefined)) {
       return catalogJson;
     }
 
     const catalog = yield* decodeRuntimeConnectionCatalogDocumentJson(catalogJson).pipe(
-      Effect.catch(() => Effect.succeed<RuntimeConnectionCatalogDocumentType | null>(null)),
+      Effect.orElseSucceed(() => null as RuntimeConnectionCatalogDocumentType | null),
     );
     if (catalog === null) {
       return catalogJson;
@@ -550,7 +550,7 @@ export const make = Effect.gen(function* () {
     }
 
     const encoded = yield* encodeRuntimeConnectionCatalogDocumentJson(reconciled.catalog).pipe(
-      Effect.catch(() => Effect.succeed<string | null>(null)),
+      Effect.orElseSucceed(() => null as string | null),
     );
     if (encoded === null) {
       return catalogJson;
