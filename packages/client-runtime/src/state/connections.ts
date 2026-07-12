@@ -2,7 +2,6 @@ import type { EnvironmentId as EnvironmentIdType } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
-import * as SubscriptionRef from "effect/SubscriptionRef";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 
 import * as EnvironmentRegistry from "../connection/registry.ts";
@@ -13,6 +12,7 @@ import {
   createAtomCommandScheduler,
   createRuntimeCommand,
   followStreamInEnvironment,
+  subscriptionRefValues,
 } from "./runtime.ts";
 
 export interface EnvironmentCatalogState {
@@ -34,7 +34,7 @@ export function createEnvironmentCatalogAtoms<R, E>(
     Stream.unwrap(
       EnvironmentRegistry.EnvironmentRegistry.pipe(
         Effect.map((registry) =>
-          SubscriptionRef.changes(registry.entries).pipe(
+          subscriptionRefValues(registry.entries).pipe(
             Stream.map((entries) => ({
               isReady: true,
               entries,
@@ -53,7 +53,7 @@ export function createEnvironmentCatalogAtoms<R, E>(
   const networkStatusAtom = runtime.atom(
     Stream.unwrap(
       EnvironmentRegistry.EnvironmentRegistry.pipe(
-        Effect.map((registry) => SubscriptionRef.changes(registry.networkStatus)),
+        Effect.map((registry) => subscriptionRefValues(registry.networkStatus)),
       ),
     ),
     { initialValue: "unknown" as const },
@@ -69,7 +69,7 @@ export function createEnvironmentCatalogAtoms<R, E>(
         environmentId,
         Stream.unwrap(
           EnvironmentSupervisor.EnvironmentSupervisor.pipe(
-            Effect.map((supervisor) => SubscriptionRef.changes(supervisor.state)),
+            Effect.map((supervisor) => subscriptionRefValues(supervisor.state)),
           ),
         ),
       ),

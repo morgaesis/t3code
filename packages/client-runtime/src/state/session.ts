@@ -2,14 +2,13 @@ import type { EnvironmentId, ServerConfig } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
-import * as SubscriptionRef from "effect/SubscriptionRef";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 
 import { EnvironmentRegistry } from "../connection/registry.ts";
 import type { PreparedConnection } from "../connection/model.ts";
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
 import { safeErrorLogAttributes } from "../errors/safeLog.ts";
-import { followStreamInEnvironment } from "./runtime.ts";
+import { followStreamInEnvironment, subscriptionRefValues } from "./runtime.ts";
 
 export function initialConfigOption<E>(
   initialConfig: Effect.Effect<ServerConfig, E>,
@@ -35,7 +34,7 @@ export function createEnvironmentSessionAtoms<R, E>(
         Stream.unwrap(
           EnvironmentSupervisor.pipe(
             Effect.map((supervisor) =>
-              SubscriptionRef.changes(supervisor.session).pipe(
+              subscriptionRefValues(supervisor.session).pipe(
                 Stream.mapEffect(
                   Option.match({
                     onNone: () => Effect.succeed(Option.none<ServerConfig>()),
@@ -70,7 +69,7 @@ export function createEnvironmentSessionAtoms<R, E>(
         environmentId,
         Stream.unwrap(
           EnvironmentSupervisor.pipe(
-            Effect.map((supervisor) => SubscriptionRef.changes(supervisor.prepared)),
+            Effect.map((supervisor) => subscriptionRefValues(supervisor.prepared)),
           ),
         ),
       ),

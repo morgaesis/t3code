@@ -125,6 +125,10 @@ interface EnvironmentServiceScope {
   readonly scope: Scope.Closeable;
 }
 
+function subscriptionRefValues<A>(ref: SubscriptionRef.SubscriptionRef<A>): Stream.Stream<A> {
+  return Stream.concat(Stream.fromEffect(SubscriptionRef.get(ref)), SubscriptionRef.changes(ref));
+}
+
 export const make = Effect.gen(function* () {
   const storage = yield* Persistence.ConnectionTargetStore;
   const registrations = yield* Persistence.ConnectionRegistrationStore;
@@ -637,7 +641,7 @@ export const make = Effect.gen(function* () {
       environmentId,
       Stream.unwrap(
         EnvironmentSupervisor.EnvironmentSupervisor.pipe(
-          Effect.map((supervisor) => SubscriptionRef.changes(supervisor.state)),
+          Effect.map((supervisor) => subscriptionRefValues(supervisor.state)),
         ),
       ),
     );

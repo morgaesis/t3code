@@ -444,6 +444,12 @@ export function followStreamInEnvironment<A, E, R>(
   );
 }
 
+export function subscriptionRefValues<A>(
+  ref: SubscriptionRef.SubscriptionRef<A>,
+): Stream.Stream<A> {
+  return Stream.concat(Stream.fromEffect(SubscriptionRef.get(ref)), SubscriptionRef.changes(ref));
+}
+
 function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, ER>,
   options: EnvironmentQueryAtomOptions<Input, A, E, EnvironmentSupervisor | R>,
@@ -458,7 +464,7 @@ function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
         Stream.unwrap(
           EnvironmentSupervisor.pipe(
             Effect.map((supervisor) =>
-              SubscriptionRef.changes(supervisor.state).pipe(
+              subscriptionRefValues(supervisor.state).pipe(
                 Stream.filterMap((state) =>
                   state.phase === "connected" ? Result.succeed(state.generation) : Result.failVoid,
                 ),

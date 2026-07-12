@@ -23,7 +23,7 @@ import { ThreadSnapshotLoader } from "./threadSnapshotHttp.ts";
 import { parseThreadKey, threadKey } from "./entities.ts";
 import { applyThreadDetailEvent } from "./threadReducer.ts";
 import { THREAD_STATE_IDLE_TTL_MS } from "./threadRetention.ts";
-import { followStreamInEnvironment } from "./runtime.ts";
+import { followStreamInEnvironment, subscriptionRefValues } from "./runtime.ts";
 import {
   EMPTY_ENVIRONMENT_THREAD_STATE,
   type EnvironmentThreadState,
@@ -183,7 +183,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     }
   });
 
-  yield* SubscriptionRef.changes(supervisor.state).pipe(
+  yield* subscriptionRefValues(supervisor.state).pipe(
     Stream.runForEach((connectionState) => {
       switch (connectionProjectionPhase(connectionState)) {
         case "synchronizing":
@@ -215,7 +215,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
             // Cold cache only: wait for a prepared connection so we can
             // authenticate the HTTP request; this mirrors the socket path, which
             // likewise waits for a live session.
-            const prepared = yield* SubscriptionRef.changes(supervisor.prepared).pipe(
+            const prepared = yield* subscriptionRefValues(supervisor.prepared).pipe(
               Stream.filter(Option.isSome),
               Stream.map((current) => current.value),
               Stream.runHead,
@@ -258,7 +258,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
 export function threadStateChanges(environmentId: EnvironmentIdType, threadId: ThreadIdType) {
   return followStreamInEnvironment(
     environmentId,
-    Stream.unwrap(makeEnvironmentThreadState(threadId).pipe(Effect.map(SubscriptionRef.changes))),
+    Stream.unwrap(makeEnvironmentThreadState(threadId).pipe(Effect.map(subscriptionRefValues))),
   );
 }
 

@@ -22,7 +22,7 @@ import { subscribe } from "../rpc/client.ts";
 import { ShellSnapshotLoader } from "./shellSnapshotHttp.ts";
 import { applyShellStreamEvent } from "./shellReducer.ts";
 import type { EnvironmentCatalogState } from "./connections.ts";
-import { followStreamInEnvironment } from "./runtime.ts";
+import { followStreamInEnvironment, subscriptionRefValues } from "./runtime.ts";
 
 export type EnvironmentShellStatus = "empty" | "cached" | "synchronizing" | "live";
 
@@ -164,7 +164,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
       const base = Option.isSome(cachedSnapshot)
         ? cachedSnapshot
         : yield* Effect.gen(function* () {
-            const prepared = yield* SubscriptionRef.changes(supervisor.prepared).pipe(
+            const prepared = yield* subscriptionRefValues(supervisor.prepared).pipe(
               Stream.filter(Option.isSome),
               Stream.map((current) => current.value),
               Stream.runHead,
@@ -188,7 +188,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
       }).pipe(Stream.runForEach(applyItem));
     }),
   );
-  yield* SubscriptionRef.changes(supervisor.state).pipe(
+  yield* subscriptionRefValues(supervisor.state).pipe(
     Stream.runForEach((connectionState) => {
       switch (connectionProjectionPhase(connectionState)) {
         case "synchronizing":
@@ -208,7 +208,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
 export function shellStateChanges(environmentId: EnvironmentId) {
   return followStreamInEnvironment(
     environmentId,
-    Stream.unwrap(makeEnvironmentShellState().pipe(Effect.map(SubscriptionRef.changes))),
+    Stream.unwrap(makeEnvironmentShellState().pipe(Effect.map(subscriptionRefValues))),
   );
 }
 
