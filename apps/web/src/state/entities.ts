@@ -176,6 +176,18 @@ export function readProject(ref: ScopedProjectRef): EnvironmentProject | null {
   return appAtomRegistry.get(environmentProjects.projectAtom(ref));
 }
 
+export function readProjectRefs(): ReadonlyArray<ScopedProjectRef> {
+  return appAtomRegistry.get(environmentProjects.projectRefsAtom);
+}
+
+export function readProjects(): ReadonlyArray<EnvironmentProject> {
+  return appAtomRegistry.get(environmentProjects.projectsAtom);
+}
+
+export function readServerConfig(environmentId: EnvironmentId): ServerConfig | null {
+  return appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId) ?? null;
+}
+
 export function readThreadShell(ref: ScopedThreadRef): EnvironmentThreadShell | null {
   return appAtomRegistry.get(environmentThreadShells.threadShellAtom(ref));
 }

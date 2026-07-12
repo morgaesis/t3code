@@ -1187,4 +1187,51 @@ describe("OrchestrationEngine", () => {
 
     await system.dispose();
   });
+
+  it("rejects duplicate active project workspace roots without appending an event", async () => {
+    const system = await createOrchestrationSystem();
+    const { engine } = system;
+    const createdAt = now();
+
+    await system.run(
+      engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.make("cmd-project-duplicate-root-1"),
+        projectId: asProjectId("project-duplicate-root-1"),
+        title: "Duplicate Root",
+        workspaceRoot: "/tmp/project-duplicate-root",
+        defaultModelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        createdAt,
+      }),
+    );
+
+    await expect(
+      system.run(
+        engine.dispatch({
+          type: "project.create",
+          commandId: CommandId.make("cmd-project-duplicate-root-2"),
+          projectId: asProjectId("project-duplicate-root-2"),
+          title: "Duplicate Root Again",
+          workspaceRoot: "/tmp/project-duplicate-root/",
+          defaultModelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5-codex",
+          },
+          createdAt,
+        }),
+      ),
+    ).rejects.toThrow("already used by project 'project-duplicate-root-1'");
+
+    const events = await system.run(
+      Stream.runCollect(engine.readEvents(0)).pipe(
+        Effect.map((chunk): OrchestrationEvent[] => Array.from(chunk)),
+      ),
+    );
+    expect(events.map((event) => event.type)).toEqual(["project.created"]);
+
+    await system.dispose();
+  });
 });

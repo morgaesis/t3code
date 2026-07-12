@@ -20,3 +20,41 @@ export function isExplicitRelativePath(value: string): boolean {
     value.startsWith("..\\")
   );
 }
+
+function isRootPath(value: string): boolean {
+  return value === "/" || value === "\\" || /^[a-zA-Z]:[/\\]?$/.test(value);
+}
+
+function absolutePathKind(value: string): "unix" | "windows" | null {
+  if (isWindowsDrivePath(value) || isUncPath(value)) {
+    return "windows";
+  }
+  if (value.startsWith("/")) {
+    return "unix";
+  }
+  return null;
+}
+
+export function trimTrailingPathSeparators(value: string): string {
+  if (value.length === 0 || isRootPath(value)) {
+    return value;
+  }
+  const trimmed =
+    absolutePathKind(value) === "unix" ? value.replace(/\/+$/g, "") : value.replace(/[\\/]+$/g, "");
+  if (trimmed.length === 0) {
+    return value;
+  }
+  return /^[a-zA-Z]:$/.test(trimmed) ? `${trimmed}\\` : trimmed;
+}
+
+export function normalizeProjectPathForDispatch(value: string): string {
+  return trimTrailingPathSeparators(value.trim());
+}
+
+export function normalizeProjectPathForComparison(value: string): string {
+  const normalized = normalizeProjectPathForDispatch(value);
+  if (isWindowsDrivePath(normalized) || normalized.startsWith("\\\\")) {
+    return normalized.replaceAll("/", "\\").toLowerCase();
+  }
+  return normalized;
+}

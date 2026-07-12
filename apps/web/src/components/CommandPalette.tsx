@@ -59,7 +59,15 @@ import { sourceControlEnvironment } from "../state/sourceControl";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { useEnvironments, usePrimaryEnvironment } from "../state/environments";
-import { useProjects, useThreadShells } from "../state/entities";
+import {
+  readProject,
+  readProjects,
+  readServerConfig,
+  readThreadShell,
+  useProjects,
+  useThreadShells,
+} from "../state/entities";
+import { environmentShell } from "../state/shell";
 import {
   startNewThreadInProjectFromContext,
   startNewThreadFromContext,
@@ -105,12 +113,16 @@ import {
   getCommandPaletteMode,
   ITEM_ICON_CLASS,
   RECENT_THREAD_LIMIT,
+  scopeActiveReadModelProjects,
+  scopeActiveReadModelThreads,
+  waitForCommandPaletteValue,
 } from "./CommandPalette.logic";
 import { resolveEnvironmentOptionLabel } from "./BranchToolbar.logic";
 import { CommandPaletteResults } from "./CommandPaletteResults";
 import { AzureDevOpsIcon, BitbucketIcon, GitHubIcon, GitLabIcon } from "./Icons";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { ThreadRowLeadingStatus, ThreadRowTrailingStatus } from "./ThreadStatusIndicators";
+import type { Project, Thread, ThreadShell } from "../types";
 import { primaryServerKeybindingsAtom } from "../state/server";
 import { resolveShortcutCommand } from "../keybindings";
 import {
@@ -127,6 +139,11 @@ import { stackedThreadToast, toastManager } from "./ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { ComposerHandleContext, useComposerHandleContext } from "../composerHandleContext";
 import type { ChatComposerHandle } from "./chat/ChatComposer";
+import { appAtomRegistry } from "../rpc/atomRegistry";
+
+const EXISTING_REMOTE_PROJECT_SHELL_SYNC_TIMEOUT_MS = 2_500;
+const CREATED_PROJECT_SHELL_SYNC_TIMEOUT_MS = 15_000;
+const PROJECT_SHELL_SYNC_INTERVAL_MS = 50;
 
 const EMPTY_BROWSE_ENTRIES: FilesystemBrowseResult["entries"] = [];
 
@@ -462,6 +479,10 @@ function OpenCommandPaletteDialog(props: {
   const createProject = useAtomCommand(projectEnvironment.create, {
     reportFailure: false,
   });
+  const readProjectSnapshot = useAtomCommand(projectEnvironment.readSnapshot, {
+    reportFailure: false,
+    reportDefect: false,
+  });
   const lookupRepository = useAtomQueryRunner(sourceControlEnvironment.repository, {
     reportFailure: false,
   });
@@ -560,6 +581,7 @@ function OpenCommandPaletteDialog(props: {
   const browseEnvironmentPlatform = getEnvironmentBrowsePlatform(
     browseEnvironment?.serverConfig?.environment.platform.os,
   );
+  const browseEnvironmentCwd = browseEnvironment?.serverConfig?.cwd ?? null;
   const isRemoteProjectCloneFlow = addProjectCloneFlow !== null;
   const isRemoteProjectRepositoryStep = addProjectCloneFlow?.step === "repository";
   const isBrowsing =
@@ -1083,6 +1105,7 @@ function OpenCommandPaletteDialog(props: {
       readonly rawCwd: string;
       readonly platform: string;
       readonly currentProjectCwd: string | null;
+      readonly environmentCwd: string | null;
     }) => {
       const rawCwd = input.rawCwd;
 
@@ -1108,29 +1131,136 @@ function OpenCommandPaletteDialog(props: {
         return;
       }
 
-      const cwd = resolveProjectPathForDispatch(rawCwd, input.currentProjectCwd);
+      const latestEnvironmentCwd =
+        readServerConfig(input.environmentId)?.cwd ?? input.environmentCwd;
+      const cwd = resolveProjectPathForDispatch(
+        rawCwd,
+        input.currentProjectCwd,
+        latestEnvironmentCwd,
+      );
       if (cwd.length === 0) return;
 
-      const existing = findProjectByPath(
-        projects.filter((project) => project.environmentId === input.environmentId),
-        cwd,
-      );
-      if (existing) {
+      const readExistingProject = () =>
+        findProjectByPath(
+          readProjects().filter((project) => project.environmentId === input.environmentId),
+          cwd,
+        ) ?? null;
+      const refreshEnvironmentShell = () => {
+        appAtomRegistry.refresh(environmentShell.stateAtom(input.environmentId));
+      };
+      const waitForProjectShell = async (project: Project) => {
+        const ref = scopeProjectRef(project.environmentId, project.id);
+        return (
+          readProject(ref) ??
+          (project.environmentId === PRIMARY_LOCAL_ENVIRONMENT_ID
+            ? null
+            : await waitForCommandPaletteValue({
+                read: () => readProject(ref),
+                timeoutMs: EXISTING_REMOTE_PROJECT_SHELL_SYNC_TIMEOUT_MS,
+                intervalMs: PROJECT_SHELL_SYNC_INTERVAL_MS,
+              }))
+        );
+      };
+      const waitForThreadShell = async (thread: Thread | ThreadShell) => {
+        const ref = scopeThreadRef(thread.environmentId, thread.id);
+        return (
+          readThreadShell(ref) ??
+          (thread.environmentId === PRIMARY_LOCAL_ENVIRONMENT_ID
+            ? null
+            : await waitForCommandPaletteValue({
+                read: () => readThreadShell(ref),
+                timeoutMs: EXISTING_REMOTE_PROJECT_SHELL_SYNC_TIMEOUT_MS,
+                intervalMs: PROJECT_SHELL_SYNC_INTERVAL_MS,
+              }))
+        );
+      };
+      const renderedExisting =
+        findProjectByPath(
+          projects.filter((project) => project.environmentId === input.environmentId),
+          cwd,
+        ) ?? null;
+      let authoritativeProjectLookupAvailable = false;
+      const readAuthoritativeExistingProject = async (): Promise<{
+        readonly project: Project;
+        readonly projectThreads: ReadonlyArray<Thread | ThreadShell>;
+      } | null> => {
+        if (input.environmentId === PRIMARY_LOCAL_ENVIRONMENT_ID) {
+          return null;
+        }
+
+        const snapshotResult = await readProjectSnapshot({
+          environmentId: input.environmentId,
+          input: {},
+        });
+        if (snapshotResult._tag === "Failure") {
+          return null;
+        }
+        authoritativeProjectLookupAvailable = true;
+        refreshEnvironmentShell();
+
+        const snapshotProjects = scopeActiveReadModelProjects({
+          environmentId: input.environmentId,
+          snapshot: snapshotResult.value,
+        });
+        const project = findProjectByPath(snapshotProjects, cwd) ?? null;
+        if (project === null) {
+          return null;
+        }
+
+        return {
+          project,
+          projectThreads: scopeActiveReadModelThreads({
+            environmentId: input.environmentId,
+            snapshot: snapshotResult.value,
+          }),
+        };
+      };
+      const openSyncedProject = async (
+        project: Project,
+        options?: {
+          readonly projectThreads?: ReadonlyArray<Thread | ThreadShell>;
+        },
+      ) => {
+        const syncedProject = (await waitForProjectShell(project)) ?? null;
+        if (syncedProject === null) {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Failed to open project",
+              description: "The project was added, but its environment has not synced yet.",
+            }),
+          );
+          return false;
+        }
+
+        const candidateThreads = options?.projectThreads ?? threads;
         const latestThread = getLatestThreadForProject(
-          threads.filter((thread) => thread.environmentId === existing.environmentId),
-          existing.id,
+          candidateThreads.filter((thread) => thread.environmentId === syncedProject.environmentId),
+          syncedProject.id,
           clientSettings.sidebarThreadSortOrder,
         );
         if (latestThread) {
+          const syncedThread = await waitForThreadShell(latestThread);
+          if (syncedThread === null) {
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: "Failed to open project",
+                description: "The project was added, but its environment has not synced yet.",
+              }),
+            );
+            return false;
+          }
+
           await navigate({
             to: "/$environmentId/$threadId",
             params: buildThreadRouteParams(
-              scopeThreadRef(latestThread.environmentId, latestThread.id),
+              scopeThreadRef(syncedThread.environmentId, syncedThread.id),
             ),
           });
         } else {
           const navigationResult = await settlePromise(() =>
-            handleNewThread(scopeProjectRef(existing.environmentId, existing.id)),
+            handleNewThread(scopeProjectRef(syncedProject.environmentId, syncedProject.id)),
           );
           if (navigationResult._tag === "Failure") {
             const error = squashAtomCommandFailure(navigationResult);
@@ -1141,10 +1271,35 @@ function OpenCommandPaletteDialog(props: {
                 description: error instanceof Error ? error.message : "An error occurred.",
               }),
             );
-            return;
+            return false;
           }
         }
         setOpen(false);
+        return true;
+      };
+      const immediateExisting = renderedExisting ?? readExistingProject();
+      const authoritativeExisting = await readAuthoritativeExistingProject();
+      if (authoritativeExisting !== null) {
+        await openSyncedProject(authoritativeExisting.project, {
+          projectThreads: authoritativeExisting.projectThreads,
+        });
+        return;
+      }
+
+      const shouldIgnoreCachedExisting = () =>
+        input.environmentId !== PRIMARY_LOCAL_ENVIRONMENT_ID && authoritativeProjectLookupAvailable;
+      const existing = shouldIgnoreCachedExisting()
+        ? null
+        : (immediateExisting ??
+          (input.environmentId === PRIMARY_LOCAL_ENVIRONMENT_ID
+            ? null
+            : await waitForCommandPaletteValue({
+                read: readExistingProject,
+                timeoutMs: EXISTING_REMOTE_PROJECT_SHELL_SYNC_TIMEOUT_MS,
+                intervalMs: PROJECT_SHELL_SYNC_INTERVAL_MS,
+              })));
+      if (existing) {
+        await openSyncedProject(existing);
         return;
       }
 
@@ -1164,6 +1319,27 @@ function OpenCommandPaletteDialog(props: {
       });
       if (createResult._tag === "Failure") {
         if (!isAtomCommandInterrupted(createResult)) {
+          const authoritativeExistingAfterRejectedCreate = await readAuthoritativeExistingProject();
+          if (authoritativeExistingAfterRejectedCreate !== null) {
+            await openSyncedProject(authoritativeExistingAfterRejectedCreate.project, {
+              projectThreads: authoritativeExistingAfterRejectedCreate.projectThreads,
+            });
+            return;
+          }
+          const existingAfterRejectedCreate = shouldIgnoreCachedExisting()
+            ? null
+            : (readExistingProject() ??
+              (input.environmentId === PRIMARY_LOCAL_ENVIRONMENT_ID
+                ? null
+                : await waitForCommandPaletteValue({
+                    read: readExistingProject,
+                    timeoutMs: EXISTING_REMOTE_PROJECT_SHELL_SYNC_TIMEOUT_MS,
+                    intervalMs: PROJECT_SHELL_SYNC_INTERVAL_MS,
+                  })));
+          if (existingAfterRejectedCreate) {
+            await openSyncedProject(existingAfterRejectedCreate);
+            return;
+          }
           const error = squashAtomCommandFailure(createResult);
           toastManager.add(
             stackedThreadToast({
@@ -1176,27 +1352,38 @@ function OpenCommandPaletteDialog(props: {
         return;
       }
 
-      const navigationResult = await settlePromise(() =>
-        handleNewThread(scopeProjectRef(input.environmentId, projectId)),
-      );
-      if (navigationResult._tag === "Failure") {
-        const error = squashAtomCommandFailure(navigationResult);
+      const createdProjectRef = scopeProjectRef(input.environmentId, projectId);
+      const syncedProject = await waitForCommandPaletteValue({
+        read: () => readProject(createdProjectRef),
+        timeoutMs: CREATED_PROJECT_SHELL_SYNC_TIMEOUT_MS,
+        intervalMs: PROJECT_SHELL_SYNC_INTERVAL_MS,
+      });
+      if (syncedProject === null) {
+        const authoritativeCreatedProject = await readAuthoritativeExistingProject();
+        if (authoritativeCreatedProject !== null) {
+          await openSyncedProject(authoritativeCreatedProject.project, {
+            projectThreads: authoritativeCreatedProject.projectThreads,
+          });
+          return;
+        }
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Failed to add project",
-            description: error instanceof Error ? error.message : "An error occurred.",
+            title: "Failed to open project",
+            description: "The project was added, but its environment has not synced yet.",
           }),
         );
         return;
       }
-      setOpen(false);
+
+      await openSyncedProject(syncedProject);
     },
     [
       handleNewThread,
       createProject,
       navigate,
       projects,
+      readProjectSnapshot,
       setOpen,
       clientSettings.sidebarThreadSortOrder,
       threads,
@@ -1211,10 +1398,12 @@ function OpenCommandPaletteDialog(props: {
         rawCwd,
         platform: browseEnvironmentPlatform,
         currentProjectCwd: currentProjectCwdForBrowse,
+        environmentCwd: browseEnvironmentCwd,
       });
     },
     [
       browseEnvironmentId,
+      browseEnvironmentCwd,
       browseEnvironmentPlatform,
       currentProjectCwdForBrowse,
       handleAddProjectForEnvironment,
@@ -1320,6 +1509,7 @@ function OpenCommandPaletteDialog(props: {
     const destinationPath = resolveProjectPathForDispatch(
       rawDestination,
       currentProjectCwdForBrowse,
+      browseEnvironmentCwd,
     );
     if (destinationPath.length === 0) {
       return;
@@ -1476,11 +1666,16 @@ function OpenCommandPaletteDialog(props: {
       ? (browseResult?.parentPath ?? trimmedQuery)
       : browseDirectoryPath || trimmedQuery;
 
-    const resolvedPath = resolveProjectPathForDispatch(initialPath, currentProjectCwdForBrowse);
+    const resolvedPath = resolveProjectPathForDispatch(
+      initialPath,
+      currentProjectCwdForBrowse,
+      browseEnvironmentCwd,
+    );
     return resolvedPath.length > 0 ? resolvedPath : undefined;
   }, [
     browseDirectoryPath,
     browseResult?.parentPath,
+    browseEnvironmentCwd,
     canOpenProjectFromFileManager,
     currentProjectCwdForBrowse,
     query,
@@ -1636,6 +1831,7 @@ function OpenCommandPaletteDialog(props: {
         rawCwd: selection.linuxPath,
         platform: "Linux",
         currentProjectCwd: null,
+        environmentCwd: readServerConfig(selection.environmentId)?.cwd ?? null,
       });
       return;
     }
