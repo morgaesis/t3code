@@ -1,7 +1,9 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Path from "effect/Path";
 import { assert, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Sink from "effect/Sink";
@@ -10,6 +12,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
   BuildCommandFailedError,
+  createDesktopStageDirectory,
   createStageWorkspaceConfig,
   createStagePatchedDependencies,
   createBuildConfig,
@@ -587,12 +590,14 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
 
   it.effect("resolves default platform and architecture from host references", () =>
     Effect.gen(function* () {
+      const path = yield* Path.Path;
       const resolved = yield* resolveBuildOptions({
         platform: Option.none(),
         target: Option.none(),
         arch: Option.none(),
         buildVersion: Option.none(),
         outputDir: Option.none(),
+        stageRootDir: Option.none(),
         skipBuild: Option.none(),
         keepStage: Option.none(),
         signed: Option.none(),
@@ -620,17 +625,48 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.equal(resolved.platform, "win");
       assert.equal(resolved.target, "nsis");
       assert.equal(resolved.arch, "arm64");
+      assert.equal(resolved.stageRootDir, path.resolve(".t3/build/desktop-stage"));
+    }),
+  );
+
+  it.effect("creates isolated scoped staging directories under the configured root", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempRoot = yield* fs.makeTempDirectoryScoped({
+        prefix: "t3code-desktop-stage-test-",
+      });
+      const stageRootDir = path.join(tempRoot, "configured-stage-root");
+
+      const [firstStageDir, secondStageDir] = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const first = yield* createDesktopStageDirectory(stageRootDir, "win", false);
+          const second = yield* createDesktopStageDirectory(stageRootDir, "win", false);
+
+          assert.equal(path.dirname(first), stageRootDir);
+          assert.equal(path.dirname(second), stageRootDir);
+          assert.notEqual(first, second);
+          assert.equal(yield* fs.exists(first), true);
+          assert.equal(yield* fs.exists(second), true);
+          return [first, second] as const;
+        }),
+      );
+
+      assert.equal(yield* fs.exists(firstStageDir), false);
+      assert.equal(yield* fs.exists(secondStageDir), false);
     }),
   );
 
   it.effect("preserves explicit false boolean flags over true env defaults", () =>
     Effect.gen(function* () {
+      const path = yield* Path.Path;
       const resolved = yield* resolveBuildOptions({
         platform: Option.some("mac"),
         target: Option.none(),
         arch: Option.some("arm64"),
         buildVersion: Option.none(),
         outputDir: Option.some("release-test"),
+        stageRootDir: Option.some(".t3/custom-desktop-stage"),
         skipBuild: Option.some(false),
         keepStage: Option.some(false),
         signed: Option.some(false),
@@ -648,6 +684,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
                 T3CODE_DESKTOP_SIGNED: "true",
                 T3CODE_DESKTOP_VERBOSE: "true",
                 T3CODE_DESKTOP_MOCK_UPDATES: "true",
+                T3CODE_DESKTOP_STAGE_ROOT_DIR: ".t3/env-desktop-stage",
               },
             }),
           ),
@@ -659,6 +696,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.equal(resolved.signed, false);
       assert.equal(resolved.verbose, false);
       assert.equal(resolved.mockUpdates, false);
+      assert.equal(resolved.stageRootDir, path.resolve(".t3/custom-desktop-stage"));
     }),
   );
 });

@@ -113,6 +113,7 @@ interface BuildCliInput {
   readonly arch: Option.Option<typeof BuildArch.Type>;
   readonly buildVersion: Option.Option<string>;
   readonly outputDir: Option.Option<string>;
+  readonly stageRootDir: Option.Option<string>;
   readonly skipBuild: Option.Option<boolean>;
   readonly keepStage: Option.Option<boolean>;
   readonly signed: Option.Option<boolean>;
@@ -547,6 +548,7 @@ interface ResolvedBuildOptions {
   readonly arch: typeof BuildArch.Type;
   readonly version: string | undefined;
   readonly outputDir: string;
+  readonly stageRootDir: string;
   readonly skipBuild: boolean;
   readonly keepStage: boolean;
   readonly signed: boolean;
@@ -958,6 +960,7 @@ const BuildEnvConfig = Config.all({
   arch: Config.schema(BuildArch, "T3CODE_DESKTOP_ARCH").pipe(Config.option),
   version: Config.string("T3CODE_DESKTOP_VERSION").pipe(Config.option),
   outputDir: Config.string("T3CODE_DESKTOP_OUTPUT_DIR").pipe(Config.option),
+  stageRootDir: Config.string("T3CODE_DESKTOP_STAGE_ROOT_DIR").pipe(Config.option),
   skipBuild: Config.boolean("T3CODE_DESKTOP_SKIP_BUILD").pipe(Config.withDefault(false)),
   keepStage: Config.boolean("T3CODE_DESKTOP_KEEP_STAGE").pipe(Config.withDefault(false)),
   signed: Config.boolean("T3CODE_DESKTOP_SIGNED").pipe(Config.withDefault(false)),
@@ -1035,6 +1038,11 @@ export const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (
     mergeOptions(input.outputDir, env.outputDir, releaseDir),
   );
 
+  const stageRootDir = path.resolve(
+    repoRoot,
+    mergeOptions(input.stageRootDir, env.stageRootDir, ".t3/build/desktop-stage"),
+  );
+
   const skipBuild = resolveBooleanFlag(input.skipBuild, env.skipBuild);
   const keepStage = resolveBooleanFlag(input.keepStage, env.keepStage);
   const signed = resolveBooleanFlag(input.signed, env.signed);
@@ -1061,6 +1069,7 @@ export const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (
     arch,
     version,
     outputDir,
+    stageRootDir,
     skipBuild,
     keepStage,
     signed,
@@ -1556,6 +1565,20 @@ const stageWslNodePtyPrebuild = Effect.fn("stageWslNodePtyPrebuild")(function* (
   );
 });
 
+export const createDesktopStageDirectory = Effect.fn("createDesktopStageDirectory")(function* (
+  stageRootDir: string,
+  platform: typeof BuildPlatform.Type,
+  keepStage: boolean,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  yield* fs.makeDirectory(stageRootDir, { recursive: true });
+  const mkdir = keepStage ? fs.makeTempDirectory : fs.makeTempDirectoryScoped;
+  return yield* mkdir({
+    directory: stageRootDir,
+    prefix: `t3code-desktop-${platform}-stage-`,
+  });
+});
+
 const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   options: ResolvedBuildOptions,
 ) {
@@ -1617,10 +1640,11 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   const appVersion = options.version ?? serverPackageJson.version;
   const iconAssets = resolveDesktopBuildIconAssets(appVersion);
   const commitHash = yield* resolveGitCommitHash(repoRoot);
-  const mkdir = options.keepStage ? fs.makeTempDirectory : fs.makeTempDirectoryScoped;
-  const stageRoot = yield* mkdir({
-    prefix: `t3code-desktop-${options.platform}-stage-`,
-  });
+  const stageRoot = yield* createDesktopStageDirectory(
+    options.stageRootDir,
+    options.platform,
+    options.keepStage,
+  );
 
   const stageAppDir = path.join(stageRoot, "app");
   const stageResourcesDir = path.join(stageAppDir, "apps/desktop/resources");
@@ -1934,6 +1958,12 @@ const buildDesktopArtifactCli = Command.make("build-desktop-artifact", {
   ),
   outputDir: Flag.string("output-dir").pipe(
     Flag.withDescription("Output directory for artifacts (env: T3CODE_DESKTOP_OUTPUT_DIR)."),
+    Flag.optional,
+  ),
+  stageRootDir: Flag.string("stage-root-dir").pipe(
+    Flag.withDescription(
+      "Parent directory for isolated build staging directories (env: T3CODE_DESKTOP_STAGE_ROOT_DIR).",
+    ),
     Flag.optional,
   ),
   skipBuild: Flag.boolean("skip-build").pipe(
