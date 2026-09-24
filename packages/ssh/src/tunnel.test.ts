@@ -1,4 +1,9 @@
+// @effect-diagnostics nodeBuiltinImport:off - Launch script tests run the real script against a throwaway home.
 import { assert, describe, it } from "@effect/vitest";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NetService from "@t3tools/shared/Net";
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
@@ -314,6 +319,112 @@ describe("ssh tunnel scripts", () => {
       launch.indexOf('elif [ -n "$REMOTE_PID" ]'),
     );
   });
+
+  const windowsHost = HostProcessPlatform.defaultValue() === "win32";
+
+  // Runs the real launch script against a throwaway HOME whose "t3" is a small
+  // HTTP server that records itself in userdata/server-runtime.json, as every
+  // server started with the default base dir does.
+  const withLaunchHome = (
+    run: (env: {
+      readonly launch: () => { readonly remotePort: number; readonly serverKind: string };
+      readonly managedPid: () => string;
+      readonly startServer: () => { readonly pid: number; readonly port: number };
+    }) => void,
+  ) => {
+    const home = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-ssh-launch-"));
+    const serverScript = NodePath.join(home, "server.mjs");
+    NodeFS.writeFileSync(
+      serverScript,
+      [
+        'import * as fs from "node:fs";',
+        'import * as http from "node:http";',
+        "const arg = (name) => process.argv[process.argv.indexOf(name) + 1];",
+        'const port = Number(arg("--port"));',
+        'const runtimeDir = `${arg("--base-dir")}/userdata`;',
+        "const server = http.createServer((_, response) => response.end());",
+        'server.listen(port, "127.0.0.1", () => {',
+        "  const bound = server.address().port;",
+        "  fs.mkdirSync(runtimeDir, { recursive: true });",
+        "  fs.writeFileSync(",
+        "    `${runtimeDir}/server-runtime.json`,",
+        "    JSON.stringify({ pid: process.pid, port: bound, origin: `http://127.0.0.1:${bound}` }),",
+        "  );",
+        "});",
+      ].join("\n"),
+    );
+    const script = buildRemoteLaunchScript({ nodeScriptPath: serverScript });
+    const pidFile = NodePath.join(home, ".t3", "ssh-launch", "launch-test", "pid");
+    const runtimeFile = NodePath.join(home, ".t3", "userdata", "server-runtime.json");
+    const pids = new Set<number>();
+    const managedPid = () => {
+      const pid = NodeFS.readFileSync(pidFile, "utf8").trim();
+      pids.add(Number(pid));
+      return pid;
+    };
+    const launch = () => {
+      const result = NodeChildProcess.spawnSync("sh", ["-s", "--", "launch-test"], {
+        input: script,
+        env: { ...process.env, HOME: home },
+        encoding: "utf8",
+        timeout: 30_000,
+      });
+      assert.equal(result.status, 0, result.stderr);
+      if (NodeFS.existsSync(pidFile)) managedPid();
+      return JSON.parse(result.stdout.trim().split("\n").at(-1) ?? "");
+    };
+    // Starts a separate default server on a free port, as a user-started
+    // `t3 serve` would, and returns what it recorded in the runtime file.
+    const startServer = () => {
+      NodeFS.rmSync(runtimeFile, { force: true });
+      const child = NodeChildProcess.spawn(
+        process.execPath,
+        [serverScript, "serve", "--port", "0", "--base-dir", NodePath.join(home, ".t3")],
+        { stdio: "ignore" },
+      );
+      if (child.pid) pids.add(child.pid);
+      const pause = new Int32Array(new SharedArrayBuffer(4));
+      for (let attempt = 0; attempt < 200 && !NodeFS.existsSync(runtimeFile); attempt += 1) {
+        Atomics.wait(pause, 0, 0, 50);
+      }
+      assert.isTrue(NodeFS.existsSync(runtimeFile), "default server did not record itself");
+      const { pid, port } = JSON.parse(NodeFS.readFileSync(runtimeFile, "utf8"));
+      return { pid, port };
+    };
+    try {
+      run({ launch, managedPid, startServer });
+    } finally {
+      for (const pid of pids) {
+        try {
+          process.kill(pid);
+        } catch {}
+      }
+      NodeFS.rmSync(home, { recursive: true, force: true });
+    }
+  };
+
+  it.skipIf(windowsHost)("reuses the managed server when the default runtime file names it", () =>
+    withLaunchHome(({ launch, managedPid }) => {
+      const first = launch();
+      const firstPid = managedPid();
+
+      assert.deepStrictEqual(launch(), { remotePort: first.remotePort, serverKind: "managed" });
+      assert.equal(managedPid(), firstPid);
+      assert.doesNotThrow(() => process.kill(Number(firstPid), 0));
+    }),
+  );
+
+  it.skipIf(windowsHost)("hands over to a different default server named by the runtime file", () =>
+    withLaunchHome(({ launch, managedPid, startServer }) => {
+      launch();
+      const managed = Number(managedPid());
+      const defaultServer = startServer();
+
+      assert.deepStrictEqual(launch(), { remotePort: defaultServer.port, serverKind: "external" });
+      assert.throws(() => process.kill(managed, 0));
+      assert.doesNotThrow(() => process.kill(defaultServer.pid, 0));
+    }),
+  );
 
   it.effect("accepts launch JSON after remote shell startup noise", () => {
     const target = {
