@@ -369,8 +369,9 @@ describe("ssh tunnel scripts", () => {
         encoding: "utf8",
         timeout: 30_000,
       });
-      assert.equal(result.status, 0, result.stderr);
+      // Record the server before asserting, so cleanup stops it on failure too.
       if (NodeFS.existsSync(pidFile)) managedPid();
+      assert.equal(result.status, 0, result.stderr);
       return JSON.parse(result.stdout.trim().split("\n").at(-1) ?? "");
     };
     // Starts a separate default server on a free port, as a user-started
